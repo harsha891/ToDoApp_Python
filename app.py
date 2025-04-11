@@ -76,10 +76,6 @@ def create_task():
     }
     table.put_item(Item=task)
 
-    user_email = decoded.get('email')
-    print(user_email)
-    subscribe_email_to_topic(user_email)
-
     message = f"A new task has been created:\nTask Description: {task['description']} \nDue Date: {task['description']} \nPriority: {task['priority']}"
     try:
         sns.publish(
@@ -185,20 +181,6 @@ def send_reminders():
                     print(f"Error sending reminder for task {task['id']}: {e}")
     
     return jsonify({"message": f"Reminders sent for {reminders_sent} tasks"}), 200
-
-def subscribe_email_to_topic(user_email):
-    try:
-        response = sns.subscribe(
-            TopicArn=SNS_TOPIC_ARN,
-            Protocol='email',
-            Endpoint=user_email,
-            ReturnSubscriptionArn=True
-        )
-        print("Subscription initiated:", response)
-        return response
-    except Exception as e:
-        print("Error subscribing email:", e)
-        return None
 
 if __name__ == '__main__':
     app.run(debug=True)
