@@ -7,6 +7,7 @@ import boto3
 import jwt
 from jwt import PyJWKClient
 import datetime
+from boto3.dynamodb.conditions import Attr
 
 load_dotenv()
 
@@ -54,7 +55,18 @@ def verify_token(token):
 @app.route('/')
 @app.route('/tasks', methods=['GET'])
 def get_tasks():
-    response = table.scan()
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    decoded = verify_token(token)
+    if not decoded:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    # Get the owner info from the token
+    owner = decoded.get('email')
+    
+    # Use a scan with a filter expression to retrieve only tasks owned by the current user
+    response = table.scan(
+        FilterExpression=Attr('owner').eq(owner)
+    )
     tasks = response.get('Items', [])
     return jsonify(tasks), 200
 
@@ -65,6 +77,7 @@ def create_task():
     if not decoded:
         return jsonify({'error': 'Unauthorized'}), 401
 
+    owner = decoded.get('email')
     data = request.get_json()
     task = {
         'id': str(uuid.uuid4()),
@@ -73,10 +86,12 @@ def create_task():
         'priority': data.get('priority', None),
         'category': data.get('category', None),
         'completed': False,
+        'owner': owner,
     }
     table.put_item(Item=task)
 
-    message = f"A new task has been created:\nTask Description: {task['description']} \nDue Date: {task['description']} \nPriority: {task['priority']}"
+    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    message = f"A new task has been created:\nTask Description: {task['description']} \nDue Date: {task['description']} \nPriority: {task['priority']}\n\nCreated at: {timestamp}"
     try:
         sns.publish(
             TopicArn=SNS_TOPIC_ARN,
