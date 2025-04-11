@@ -1,0 +1,7 @@
+Flask
+boto3
+flask-cors
+pyjwt
+python-dotenv
+zappa
+cryptography
