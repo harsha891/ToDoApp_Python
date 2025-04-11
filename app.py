@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import boto3
 import jwt
 from jwt import PyJWKClient
+import datetime
 
 load_dotenv()
 
@@ -60,7 +61,8 @@ def get_tasks():
 @app.route('/tasks', methods=['POST'])
 def create_task():
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    if not verify_token(token):
+    decoded = verify_token(token)
+    if not decoded:
         return jsonify({'error': 'Unauthorized'}), 401
 
     data = request.get_json()
@@ -74,13 +76,19 @@ def create_task():
     }
     table.put_item(Item=task)
 
-    message = f"A new task has been created: {task['description']}"
-    sns.publish(
-        TopicArn=SNS_TOPIC_ARN,
-        Message=message,
-        Subject='New Task Notification',
-        MessageGroupId='default'
-    )
+    user_email = decoded.get('email')
+    print(user_email)
+    subscribe_email_to_topic(user_email)
+
+    message = f"A new task has been created:\nTask Description: {task['description']} \nDue Date: {task['description']} \nPriority: {task['priority']}"
+    try:
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Message=message,
+            Subject=f"New Task Notification : {task['description']}"
+        )
+    except Exception as e:
+        print("Error sending notification : ", e)
     
     return jsonify(task), 201
 
@@ -142,6 +150,55 @@ def delete_task(task_id):
 
     table.delete_item(Key={'id': task_id})
     return jsonify({'message': 'Task deleted successfully'}), 200
+
+@app.route('/send-reminders', methods=['POST'])
+def send_reminders():
+    today = datetime.datetime.utcnow().date()
+    # Define the threshold date (e.g., tasks due today or tomorrow)
+    threshold_date = today + datetime.timedelta(days=1)
+    
+    response = table.scan()
+    tasks = response.get('Items', [])
+    reminders_sent = 0
+    
+    for task in tasks:
+        if not task.get('completed', False) and task.get('dueDate'):
+            try:
+                # Parse the dueDate; adjust the format if needed
+                due_date = datetime.datetime.strptime(task['dueDate'], "%Y-%m-%d").date()
+            except Exception as e:
+                print(f"Error parsing date for task {task['id']}: {e}")
+                continue
+                
+            # If due date is today or up to tomorrow and not in the past:
+            if today <= due_date <= threshold_date:
+                # Construct a reminder message using task details
+                message = f"Reminder: Your task '{task['description']}' is due on {task['dueDate']}."
+                try:
+                    sns.publish(
+                        TopicArn=SNS_TOPIC_ARN,
+                        Message=message,
+                        Subject= f"Task Reminder Notification : '{task['description']}'"
+                    )
+                    reminders_sent += 1
+                except Exception as e:
+                    print(f"Error sending reminder for task {task['id']}: {e}")
+    
+    return jsonify({"message": f"Reminders sent for {reminders_sent} tasks"}), 200
+
+def subscribe_email_to_topic(user_email):
+    try:
+        response = sns.subscribe(
+            TopicArn=SNS_TOPIC_ARN,
+            Protocol='email',
+            Endpoint=user_email,
+            ReturnSubscriptionArn=True
+        )
+        print("Subscription initiated:", response)
+        return response
+    except Exception as e:
+        print("Error subscribing email:", e)
+        return None
 
 if __name__ == '__main__':
     app.run(debug=True)
